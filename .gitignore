@@ -1,0 +1,34 @@
+# --- Python cache & environment ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.env/
+.venv/
+venv/
+ENV/
+
+# --- Model weights / large binaries ---
+*.pt
+
+# --- Logs & temporary files ---
+*.log
+*.tmp
+*.bak
+
+# --- OS-generated files ---
+.DS_Store
+Thumbs.db
+
+# --- Project-specific ---
+/input/*
+/output/*
+/sort/*
+
+# --- Folder Structure ---
+!/input/.gitkeep
+!/output/.gitkeep
+!/output/crop/.gitkeep
+!/sort/.gitkeep
