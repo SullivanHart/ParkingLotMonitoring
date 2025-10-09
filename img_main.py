@@ -9,7 +9,6 @@ print("=== Starting Script ===")
 # Local imports
 try:
     import util
-    from sort.sort import Sort
     from util import get_car, read_license_plate, write_csv
     print("[OK] Utility modules imported")
 except Exception as e:
