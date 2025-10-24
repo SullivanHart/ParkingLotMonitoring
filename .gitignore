@@ -22,7 +22,7 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# --- Project-specific ---
+# --- Instance-specific ---
 /input/*
 /output/*
 

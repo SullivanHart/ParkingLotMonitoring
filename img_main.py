@@ -49,7 +49,7 @@ except Exception as e:
 while( True ):
 	# Load still image
 	frame_path = "./input/latest.jpg"
-	take_pic( frame_path )
+	# take_pic( frame_path )
 	frame = cv2.imread(frame_path)
 	if frame is None:
 	    print(f"[FAIL] Could not load image at {frame_path}")
