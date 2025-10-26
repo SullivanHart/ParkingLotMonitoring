@@ -124,11 +124,10 @@ while True:
 
     # --- Send updates to server ---
     cars_to_send = [data["car_obj"] for data in results[frame_nmr].values() if "car_obj" in data]
-    if cars_to_send:
-        try:
-            response = post_block(block=2, cars=cars_to_send)
-            print(f"[OK] Sent {len(cars_to_send)} car(s) to server, status: {response.status_code}")
-        except Exception as e:
-            print("[FAIL] Error sending data to server:", e)
+    try:
+        response = post_block(block=2, cars=cars_to_send)
+        print(f"[OK] Sent {len(cars_to_send)} car(s) to server, status: {response.status_code}")
+    except Exception as e:
+        print("[FAIL] Error sending data to server:", e)
 
     frame_nmr += 1

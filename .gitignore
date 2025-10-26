@@ -28,5 +28,4 @@ Thumbs.db
 
 # --- Folder Structure ---
 !/input/.gitkeep
-!/output/crop/.gitkeep
 !/output/.gitkeep
