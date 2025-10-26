@@ -53,7 +53,7 @@ vehicle_class_map = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 while True:
     frame_path = "./input/latest.jpg"
-    # take_pic(frame_path)  # Uncomment if capturing live
+    take_pic(frame_path) # capture live
     frame = cv2.imread(frame_path)
     if frame is None:
         raise FileNotFoundError(frame_path)
@@ -97,6 +97,7 @@ while True:
 
         # Skip very low-confidence plates
         if score < 0.5:
+            print( f"[DEBUG] Skipping low-confidence plate: { score }")
             continue
 
         xcar1, ycar1, xcar2, ycar2, car_id = get_car(plate, track_ids)
@@ -107,6 +108,7 @@ while True:
         # Crop license plate
         crop = frame[int(y1):int(y2), int(x1):int(x2)]
         if crop.size == 0:
+            print("[DEBUG] Skipping due 0 crop size")
             continue
 
         crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -124,6 +126,11 @@ while True:
 
     # --- Send updates to server ---
     cars_to_send = [data["car_obj"] for data in results[frame_nmr].values() if "car_obj" in data]
+
+    if not cars_to_send:
+        # Send empty request
+        cars_to_send = []
+
     try:
         response = post_block(block=2, cars=cars_to_send)
         print(f"[OK] Sent {len(cars_to_send)} car(s) to server, status: {response.status_code}")

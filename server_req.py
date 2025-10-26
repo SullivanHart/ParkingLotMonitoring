@@ -8,16 +8,14 @@ BASE_URL = "http://sddec25-09e.ece.iastate.edu:8080/api"
 LOT_ID = 0
 
 def post_block( block, cars ):
-    data = { 
-            "cars" : [ car.to_dict() for car in cars ]
+    json = { 
+            "cars" : [ car.to_dict() for car in cars ] if cars else []
         }
-    print( data )
+    print( f"[INFO] JSON: {json}" )
 
     return requests.post( 
         BASE_URL + f"/parkinglots/{ LOT_ID }/{ block }", 
-        json = {
-            "cars" : [ car.to_dict() for car in cars ]
-        })
+        json = json)
 
 def get_lots( ):
     return requests.get( BASE_URL + "/parkinglots" ).text
