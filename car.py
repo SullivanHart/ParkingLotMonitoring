@@ -1,8 +1,15 @@
 class Car():
-    def __init__( self, color = None, style = None, plates = None ):
+    def __init__( self, prob, color = None, style = None, plates = None ):
+        self.prob = prob
         self.color = color
         self.style = style
         self.plates = plates or []
+
+    def setColor( self, color ):
+        self.prob = prob
+
+    def getColor( self ):
+        return self.prob
 
     def setColor( self, color ):
         self.color = color
@@ -24,7 +31,8 @@ class Car():
 
     def to_dict( self ):
         return {
+            "prob" : self.prob,
             "color" : self.color,
             "style" : self.style,
-            "plates" : self.plates
+            "plates" : [ p.to_dict() for p in self.plates ]
         }

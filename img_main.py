@@ -1,166 +1,134 @@
 from ultralytics import YOLO
 import cv2
 import numpy as np
-from img_visualize import visualize_results
-from tqdm import tqdm
-
+from paddleocr import PaddleOCR
 from take_pic import take_pic
+from img_visualize import visualize_results
+from util import get_car, read_license_plate, write_csv
+from sklearn.cluster import KMeans
+import webcolors
+
+from server_req import post_block
+from car import Car
+from plate import Plate
+from tracker import Tracker
+
+# Helper: get dominant CSS3 color of a vehicle crop
+def get_vehicle_color(vehicle_crop):
+    crop_rgb = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2RGB)
+    pixels = crop_rgb.reshape(-1, 3)
+
+    # KMeans to find dominant color
+    kmeans = KMeans(n_clusters=1, random_state=0).fit(pixels)
+    dominant_color = kmeans.cluster_centers_[0].astype(int)
+    rgb_triplet = webcolors.IntegerRGB(*dominant_color)
+
+    # Try exact match first
+    try:
+        color_name = webcolors.rgb_to_name(rgb_triplet, spec="css3")
+    except ValueError:
+        # Find closest CSS3 color
+        min_dist = float('inf')
+        color_name = "unknown"
+        for name in webcolors.names(spec="css3"):
+            css_rgb = webcolors.name_to_rgb(name)
+            dist = sum((a - b) ** 2 for a, b in zip(dominant_color, (css_rgb.red, css_rgb.green, css_rgb.blue)))
+            if dist < min_dist:
+                min_dist = dist
+                color_name = name
+    return color_name
 
 print("=== Starting Script ===")
 
-# Local imports
-try:
-    import util
-    from util import get_car, read_license_plate, write_csv
-    print("[OK] Utility modules imported")
-except Exception as e:
-    print("[FAIL] Error importing util modules:", e)
-    raise
+# Initialize models
+coco_model = YOLO("yolov8n.pt")
+license_plate_detector = YOLO("license_plate_detector.pt")
+ocr_reader = PaddleOCR(use_angle_cls=True, lang='en')
 
 results = {}
+frame_nmr = 0
+mot_tracker = Tracker()  # dummy tracker
+vehicles = [2, 3, 5, 7]  # COCO vehicle classes
+vehicle_class_map = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# Initialize tracker class
-class Tracker:
-    def __init__(self):
-        self.next_id = 0
+while True:
+    frame_path = "./input/latest.jpg"
+    # take_pic(frame_path)  # Uncomment if capturing live
+    frame = cv2.imread(frame_path)
+    if frame is None:
+        raise FileNotFoundError(frame_path)
+    print(f"[OK] Image loaded: {frame.shape}")
 
-    def update(self, detections):
-        """
-        Assign a unique ID to each detection.
-        detections: numpy array of [x1, y1, x2, y2, score] or similar
-        Returns: numpy array of [x1, y1, x2, y2, id] for each detection
-        """
-        tracked = []
-        for det in detections:
-            x1, y1, x2, y2 = det[:4]  # ignore score
-            tracked.append([x1, y1, x2, y2, self.next_id])
-            self.next_id += 1
-        return np.array(tracked)
+    results[frame_nmr] = {}
 
-# Load models
-try:
-    coco_model = YOLO("yolov8n.pt")
-    license_plate_detector = YOLO("license_plate_detector.pt")
-    print("[OK] Models loaded")
-except Exception as e:
-    print("[FAIL] Model loading error:", e)
-    raise
+    # --- Vehicle Detection ---
+    detections = coco_model(frame)[0]
+    filtered_dets = [
+        det for det in detections.boxes.data.tolist() if int(det[5]) in vehicles and det[4] >= 0.8
+    ]
+    print("Filtered vehicle detections:", filtered_dets)
 
-while( True ):
-	# Load still image
-	frame_path = "./input/latest.jpg"
-	# take_pic( frame_path )
-	frame = cv2.imread(frame_path)
-	if frame is None:
-	    print(f"[FAIL] Could not load image at {frame_path}")
-	    raise FileNotFoundError(frame_path)
-	else:
-	    print(f"[OK] Image loaded: {frame.shape}")
+    # --- Update tracker ---
+    track_ids = mot_tracker.update(np.asarray(filtered_dets))
+    print(f"[INFO] Found {len(track_ids)} vehicles after tracking")
 
-	frame_nmr = 0
-	results[frame_nmr] = {}
+    # --- Initialize Car objects immediately ---
+    tracker_id_to_det = {}
+    for i, det in enumerate(filtered_dets):
+        x1, y1, x2, y2, score, cls = det
+        car_id = int(track_ids[i][-1]) if track_ids.ndim > 1 else int(track_ids[i])
 
+        car_crop = frame[int(y1):int(y2), int(x1):int(x2)]
+        color = get_vehicle_color(car_crop) if car_crop.size > 0 else "unknown"
+        style = vehicle_class_map.get(int(cls), "unknown")
 
-	# Initialize dummy tracker
-	mot_tracker = Tracker()
-	print("[OK] Dummy tracker initialized")
+        results[frame_nmr][car_id] = {
+            "car_obj": Car( prob=det[4], color=color, style=style, plates=[]),
+            "bbox": [x1, y1, x2, y2]
+        }
 
-	# Vehicle classes in COCO
-	vehicles = [2, 3, 5, 7]
+        tracker_id_to_det[car_id] = det
 
-	# Detect vehicles
-	print("[INFO] Running vehicle detection...")
-	detections = coco_model(frame)[0]
-	print(f"[OK] Vehicle detection complete. Found {len(detections.boxes)} objects.")
+    # --- Detect license plates ---
+    plates_detected = license_plate_detector(frame)[0]
 
-	detections_ = []
-	for detection in detections.boxes.data.tolist():
-	    x1, y1, x2, y2, score, class_id = detection
-	    if int(class_id) in vehicles:
-	        detections_.append([x1, y1, x2, y2, score])
+    for plate in plates_detected.boxes.data.tolist():
+        x1, y1, x2, y2, score, _ = plate
 
-	print(f"[OK] Filtered {len(detections_)} vehicles out of {len(detections.boxes)} total detections")
+        # Skip very low-confidence plates
+        if score < 0.5:
+            continue
 
-	# Track vehicles
-	track_ids = mot_tracker.update(np.asarray(detections_))
-	print(f"[OK] Tracker assigned {len(track_ids)} IDs")
+        xcar1, ycar1, xcar2, ycar2, car_id = get_car(plate, track_ids)
+        if car_id == -1:
+            print("[WARN] No matching car for license plate")
+            continue
 
-	# Detect license plates
-	print("[INFO] Running license plate detection...")
-	license_plates = license_plate_detector(frame)[0]
-	print(f"[OK] License plate detection complete. Found {len(license_plates.boxes)} candidates")
+        # Crop license plate
+        crop = frame[int(y1):int(y2), int(x1):int(x2)]
+        if crop.size == 0:
+            continue
 
-	for license_plate in license_plates.boxes.data.tolist():
-	    x1, y1, x2, y2, score, class_id = license_plate
+        crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
-	    # Assign license plate to car
-	    xcar1, ycar1, xcar2, ycar2, car_id = get_car(license_plate, track_ids)
-	    if car_id == -1:
-	        print("[WARN] No matching car found for license plate")
-	        continue
+        # OCR for license plate
+        text, conf = read_license_plate(ocr_reader, crop_gray)
+        if text is None or conf < 0.8:
+            print(f"[DEBUG] Skipped plate '{text}' (score={conf})")
+            continue
+        print(f"[INFO] OCR plate: '{text}' (score={conf}) for car_id={car_id}")
 
-	    # Crop license plate
-	    license_plate_crop = frame[int(y1):int(y2), int(x1): int(x2), :]
-	    if license_plate_crop.size == 0:
-	        print("[WARN] Empty license plate crop")
-	        continue
+        # Append plate info
+        if car_id in results[frame_nmr]:
+            results[frame_nmr][car_id]["car_obj"].plates.append(Plate(text=text, prob=conf))
 
-	    # Process license plate (grayscale + threshold)
-	    # license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
-	    # _, license_plate_crop_thresh = cv2.threshold(
-	    #     license_plate_crop_gray, 64, 255, cv2.THRESH_BINARY_INV
-	    # )
+    # --- Send updates to server ---
+    cars_to_send = [data["car_obj"] for data in results[frame_nmr].values() if "car_obj" in data]
+    if cars_to_send:
+        try:
+            response = post_block(block=2, cars=cars_to_send)
+            print(f"[OK] Sent {len(cars_to_send)} car(s) to server, status: {response.status_code}")
+        except Exception as e:
+            print("[FAIL] Error sending data to server:", e)
 
-	    license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
-	    license_plate_crop_thresh = cv2.adaptiveThreshold(
-	        license_plate_crop_gray,
-	        255,
-	        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-	        cv2.THRESH_BINARY,
-	        11,  # block size (odd number)
-	        2    # C value, subtracts from mean
-	    )
-
-
-	    # Save crops for inspection
-	    cv2.imwrite(f"./output/crop/gray_{frame_nmr}_{car_id}.jpg", license_plate_crop_gray)
-	    cv2.imwrite(f"./output/crop/thresh_{frame_nmr}_{car_id}.jpg", license_plate_crop_thresh)
-	    print(f"[DEBUG] Saved cropped plate images for car_id={car_id}")
-
-	    # Read license plate number
-	    # license_plate_text, license_plate_text_score = read_license_plate(
-	    #     license_plate_crop_thresh
-	    # )    
-	    
-	    license_plate_text, license_plate_text_score = read_license_plate(
-	        license_plate_crop_gray
-	    )
-
-	    print(f"[DEBUG] OCR result: {license_plate_text} (score={license_plate_text_score})")
-
-	    if license_plate_text is not None:
-	        results[frame_nmr][car_id] = {
-	            "car": {"bbox": [xcar1, ycar1, xcar2, ycar2]},
-	            "license_plate": {
-	                "bbox": [x1, y1, x2, y2],
-	                "text": license_plate_text,
-	                "bbox_score": score,
-	                "text_score": license_plate_text_score,
-	            },
-	        }
-
-	# Write results
-	try:
-	    write_csv(results, "./output/test.csv")
-	    print("[OK] Results written to ./output/test.csv")
-	except Exception as e:
-	    print("[FAIL] Error writing CSV:", e)
-
-	# Visualize results
-	try:
-	    visualize_results(frame_path, results, "./output/out.jpg")
-	    print("[OK] Visualization written to ./output/out.jpg")
-	except Exception as e:
-	    print("[FAIL] Visualization error:", e)
-
-print("=== Script Finished ===")
+    frame_nmr += 1

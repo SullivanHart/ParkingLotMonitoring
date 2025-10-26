@@ -1,10 +1,6 @@
 import string
-from paddleocr import PaddleOCR
 import cv2
 import numpy as np
-
-# Initialize the PaddleOCR reader
-ocr_reader = PaddleOCR(use_angle_cls=True, lang='en')  # lang='en' for English
 
 # Map prohibitted characters in US
 ocr_corrections = {
@@ -22,7 +18,7 @@ def write_csv(results, output_path):
 
         for frame_nmr in results.keys():
             for car_id in results[frame_nmr].keys():
-                print(results[frame_nmr][car_id])
+                # print(results[frame_nmr][car_id])
                 if 'car' in results[frame_nmr][car_id] and \
                    'license_plate' in results[frame_nmr][car_id] and \
                    'text' in results[frame_nmr][car_id]['license_plate']:
@@ -58,32 +54,54 @@ def format_license(text):
         formatted += ocr_corrections.get(c, c)
     return formatted[:8]
 
-def read_license_plate(license_plate_crop):
-    if license_plate_crop is None or license_plate_crop.size == 0:
-        print("[WARN] Empty license plate crop")
-        return None, None
+# def read_license_plate(license_plate_crop):
+#     if license_plate_crop is None or license_plate_crop.size == 0:
+#         print("[WARN] Empty license plate crop")
+#         return None, None
 
-    if len(license_plate_crop.shape) == 2 or license_plate_crop.shape[2] == 1:
-        license_plate_crop = cv2.cvtColor(license_plate_crop, cv2.COLOR_GRAY2BGR)
+#     if len(license_plate_crop.shape) == 2 or license_plate_crop.shape[2] == 1:
+#         license_plate_crop = cv2.cvtColor(license_plate_crop, cv2.COLOR_GRAY2BGR)
 
-    ocr_result = ocr_reader.predict(license_plate_crop)
-    if not ocr_result:
-        print("[DEBUG] OCR found nothing")
-        return None, None
+#     ocr_result = ocr_reader.predict(license_plate_crop)
+#     if not ocr_result:
+#         print("[DEBUG] OCR found nothing")
+#         return None, None
 
-    rec_texts = ocr_result[0].get('rec_texts', [])
-    rec_scores = ocr_result[0].get('rec_scores', [])
+#     rec_texts = ocr_result[0].get('rec_texts', [])
+#     rec_scores = ocr_result[0].get('rec_scores', [])
 
-    for text, score in zip(rec_texts, rec_scores):
-        text_clean = text.upper().replace(' ', '')
-        print(f"[DEBUG] OCR raw text: {text} -> cleaned: {text_clean}, score: {score}")
+#     for text, score in zip(rec_texts, rec_scores):
+#         text_clean = text.upper().replace(' ', '')
+#         print(f"[DEBUG] OCR raw text: {text} -> cleaned: {text_clean}, score: {score}")
 
-        if license_complies_format(text_clean):
-            formatted = format_license(text_clean)
-            print(f"[DEBUG] License plate formatted: {formatted}")
-            return formatted, score
+#         if license_complies_format(text_clean):
+#             formatted = format_license(text_clean)
+#             print(f"[DEBUG] License plate formatted: {formatted}")
+#             return formatted, score
 
-    return None, None
+#     return None, None
+
+def read_license_plate(ocr_reader, license_plate_crop):
+    try:
+        ocr_result = ocr_reader.ocr(license_plate_crop, cls=True)
+
+        if not ocr_result or len(ocr_result[0]) == 0:
+            return None, 0.0
+
+        # Each element in ocr_result[0] is like: [box, (text, confidence)]
+        text_conf_pairs = [item[1] for item in ocr_result[0] if len(item) > 1]
+        texts = [t[0] for t in text_conf_pairs]
+        scores = [t[1] for t in text_conf_pairs]
+
+        # Combine recognized parts
+        license_plate_text = "".join(texts)
+        license_plate_text_score = sum(scores) / len(scores) if scores else 0.0
+
+        return license_plate_text, license_plate_text_score
+
+    except Exception as e:
+        print(f"[ERROR] OCR failed: {e}")
+        return None, 0.0
 
 def get_car(license_plate, vehicle_track_ids):
     """Find the car bbox and ID that contains the license plate bbox."""
