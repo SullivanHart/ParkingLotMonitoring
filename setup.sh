@@ -1,45 +1,45 @@
 #!/bin/bash
-# Setup the venv w/ req
+# Setup environment using uv and pyproject.toml
 
-# Exit on error
-set -e
+############################################################
+# Set exit on error
+############################################################
+set -e 
 
-# Check python
-if ! command -v python3 &>/dev/null; then
-  echo "Python3 does not exist."
-  exit 1
-fi
-
-# Ensure required system packages exist
-echo "Installing required system packages..."
+############################################################
+# Ensure system dependencies
+############################################################
+echo "Installing system packages..."
 sudo apt update
-sudo apt install -y swig build-essential python3-dev pkg-config
+sudo apt install -y swig build-essential python3-dev pkg-config curl
 
-# Create venv if nonexistent 
-if [ ! -d "venv" ]; then
-  echo "Creating virtual environment."
-  python3 -m venv venv
+############################################################
+# Install uv if missing (Raspberry Pi OS compatible)
+############################################################
+if ! command -v uv &>/dev/null; then
+    echo "uv not found. Installing..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+############################################################
+# Create uv environment
+############################################################
+if [ ! -d ".venv" ]; then
+    echo "Creating uv virtual environment..."
+    uv venv
 else
-  echo "Virtual environment already exists."
+    echo ".venv already exists."
 fi
 
-# Activate venv
-source venv/bin/activate
+# Activate environment
+source .venv/bin/activate
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
+############################################################
+# Install project dependencies from pyproject.toml
+############################################################
+echo "Installing dependencies from pyproject.toml..."
+uv sync
 
-# Install Pi 5 compatible PaddlePaddle (ARM64)
-echo "Installing PaddlePaddle for Pi 5..."
-pip install paddlepaddle==2.6.1 -f https://www.paddlepaddle.org.cn/whl/linux/aarch64/
-pip install paddleocr==2.7.0.3
-
-# Install other requirements if file exists
-if [ -f "requirements.txt" ]; then
-  echo "Installing other dependencies from requirements.txt..."
-  pip install -r requirements.txt
-fi
-
-echo "Setup complete."
-echo "Start venv w/ 'source venv/bin/activate'."
+echo "Setup complete!"
+echo "Activate with: source .venv/bin/activate"
